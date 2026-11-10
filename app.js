@@ -23,7 +23,8 @@ function showHeatmapDetail(symbol){
  const p=Number(q.changePercentage||0),up=p>=0;
  $("#heatmap-detail").innerHTML='<div class="section-kicker">DÉTAIL DE LA VALEUR</div><h2>'+esc(q.name||q.symbol)+'</h2><div class="heat-detail-symbol">'+esc(q.symbol)+'</div><div class="heat-detail-price">'+fmt(q.price)+' <small>'+esc(q.currency||"")+'</small></div><div class="heat-detail-change '+(up?"up":"down")+'">'+(up?"+":"")+fmt(p)+'% aujourd’hui</div><dl><dt>Secteur</dt><dd>'+esc(sectorFor(q.symbol))+'</dd><dt>Place de cotation</dt><dd>'+esc(q.exchange||"—")+'</dd><dt>Volume</dt><dd>'+(q.volume?Number(q.volume).toLocaleString("fr-FR"):"—")+'</dd><dt>Dernière mise à jour</dt><dd>'+(q.timestamp?new Date(q.timestamp*1000).toLocaleString("fr-FR"):"Non précisée")+'</dd></dl><p class="heat-detail-note">Variation calculée à partir des données reçues du fournisseur. Ce signal ne constitue pas une prévision.</p>';
 }
-\nfunction renderIndices(){
+
+function renderIndices(){
 const target=$("#index-grid");if(!target)return;
 const rows=liveIndices||[];
 target.innerHTML=rows.length?rows.map(x=>{const pct=Number(x.changePercentage||0),up=pct>=0;return "<div class=\"index-card\"><div class=\"index-label\"><span>"+esc(x.label||x.name||x.symbol)+"</span><span>●</span></div><div class=\"index-value\">"+(x.price==null?"—":fmt(x.price))+"</div><div class=\"index-change "+(up?"pos":"neg")+"\">"+(up?"+":"")+fmt(pct)+"%</div><div class=\"index-foot\">Yahoo Finance · "+(x.timestamp?new Date(Number(x.timestamp)*1000).toLocaleTimeString("fr-FR"):"cours fournisseur")+"</div></div>"}).join(""):"<div class=\"index-card\"><div class=\"index-label\"><span>Indices indisponibles</span></div><div class=\"index-value\">—</div><div class=\"index-foot\">Aucune cotation reçue du fournisseur.</div></div>";
