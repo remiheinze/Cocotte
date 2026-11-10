@@ -19,20 +19,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
-      - name: Deploy Worker and configure provider secrets
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Verify required Cloudflare credentials
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "::error::CLOUDFLARE_API_TOKEN is missing"; exit 1)
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "::error::CLOUDFLARE_ACCOUNT_ID is missing"; exit 1)
+      - run: npm ci
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+      - name: Configure optional provider secrets
+        env:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "Cloudflare credentials not configured; Worker deployment skipped."
-            exit 0
-          fi
-          npx wrangler deploy
-          if [ -n "$FMP_API_KEY" ]; then printf '%s' "$FMP_API_KEY" | npx wrangler secret put FMP_API_KEY; fi
           if [ -n "$FINNHUB_API_KEY" ]; then printf '%s' "$FINNHUB_API_KEY" | npx wrangler secret put FINNHUB_API_KEY; fi
           if [ -n "$ANTHROPIC_API_KEY" ]; then printf '%s' "$ANTHROPIC_API_KEY" | npx wrangler secret put ANTHROPIC_API_KEY; fi
+      - name: Smoke test deployed Worker
+        run: |
+          set -e
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "https://cocotte-market-intelligence-api.remiheinze.workers.dev/api/health"
+          echo
+          curl --fail --silent --show-error --retry 3 --retry-delay 3 "https://cocotte-market-intelligence-api.remiheinze.workers.dev/api/market?market=france" > /tmp/market.json
+          node -e "const d=require('/tmp/market.json'); if(!Array.isArray(d.quotes)||!d.quotes.length) process.exit(1); console.log('Market smoke test OK:',d.quotes.length,'quotes')"
+          curl --fail --silent --show-error --retry 3 --retry-delay 3 "https://cocotte-market-intelligence-api.remiheinze.workers.dev/api/news?market=france" > /tmp/news.json
+          node -e "const d=require('/tmp/news.json'); if(!Array.isArray(d.articles)) process.exit(1); console.log('News endpoint OK:',d.articles.length,'articles')"
