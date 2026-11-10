@@ -34,6 +34,28 @@ export default {async fetch(request,env){
    if(!quotes.length&&!indices.length)throw new Error("Yahoo Finance ne renvoie aucune cotation pour cet univers. Réessaie dans quelques instants.");
    return json({market,quotes,indices,source:"Yahoo Finance",notice:"Source non officielle ; délai et disponibilité variables.",asOf:new Date().toISOString(),universeSize:UNIVERSES[market].length});
   }
+  if(url.pathname==="/api/patterns"&&request.method==="GET"){
+   const market=safeMarket(url.searchParams.get("market"));
+   const period=url.searchParams.get("period")==="daily"?"daily":url.searchParams.get("period")==="monthly"?"monthly":"weekly";
+   const symbols=UNIVERSES[market];
+   const now=Math.floor(Date.now()/1000),from=now-366*24*60*60;
+   const settled=await Promise.allSettled(symbols.map(async symbol=>{
+    const payload=await fetchJson("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(symbol)+"?period1="+from+"&period2="+now+"&interval=1d",{ "user-agent":"Mozilla/5.0 CocotteMarket/1.0","accept":"application/json"});
+    const r=payload.chart?.result?.[0];if(!r)throw new Error("Historique indisponible pour "+symbol);
+    const q=r.indicators?.quote?.[0]||{},ts=r.timestamp||[],candles=[];
+    for(let i=0;i<ts.length;i++){const open=Number(q.open?.[i]),close=Number(q.close?.[i]);if(Number.isFinite(open)&&Number.isFinite(close)&&open>0)candles.push({time:ts[i],open,close})}
+    const buckets=new Map();
+    for(const c of candles){
+     const d=new Date(c.time*1000),key=period==="daily"?d.toISOString().slice(0,10):period==="monthly"?d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0"):(()=>{const x=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));const day=(x.getUTCDay()+6)%7;x.setUTCDate(x.getUTCDate()-day+3);const first=new Date(Date.UTC(x.getUTCFullYear(),0,4));const wk=1+Math.round(((x-first)/86400000-3+((first.getUTCDay()+6)%7))/7);return x.getUTCFullYear()+"-S"+String(wk).padStart(2,"0")})();
+     const b=buckets.get(key)||{period:key,open:c.open,close:c.close};b.close=c.close;buckets.set(key,b);
+    }
+    const values=[...buckets.values()].map(b=>({period:b.period,changePercentage:(b.close-b.open)/b.open*100})).filter(x=>Number.isFinite(x.changePercentage));
+    const up=values.filter(x=>x.changePercentage>0).length,down=values.filter(x=>x.changePercentage<0).length,flat=values.length-up-down;
+    return {symbol,name:r.meta?.longName||r.meta?.shortName||symbol,periods:values.length,up,down,flat,upFrequency:values.length?up/values.length*100:0,downFrequency:values.length?down/values.length*100:0,recent:values.slice(-12).map(x=>({period:x.period,changePercentage:Number(x.changePercentage.toFixed(2))})),source:"Yahoo Finance"};
+   }));
+   const rows=settled.filter(x=>x.status==="fulfilled").map(x=>x.value).sort((a,b)=>Math.max(b.upFrequency,b.downFrequency)-Math.max(a.upFrequency,a.downFrequency));
+   return json({market,period,lookbackDays:366,rows,unavailable:settled.filter(x=>x.status==="rejected").length,source:"Yahoo Finance",asOf:new Date().toISOString()});
+  }
   if(url.pathname==="/api/news"&&request.method==="GET"){
    if(!env.FINNHUB_API_KEY)return json({error:"FINNHUB_API_KEY non configurée côté Worker."},503);
    const market=safeMarket(url.searchParams.get("market"));
