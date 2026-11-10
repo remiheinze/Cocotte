@@ -17,7 +17,7 @@ Le déploiement statique est automatisé par GitHub Actions (.github/workflows/p
 
 ## Activer les données et l'IA
 
-Fournisseurs prévus : Financial Modeling Prep (FMP) pour les cotations d'un univers défini, Marketaux pour les actualités, Anthropic Claude pour l'analyse structurée. Vérifier les tarifs, quotas, marchés couverts, délais et licences auprès des fournisseurs.
+Fournisseurs prévus : Financial Modeling Prep (FMP) pour les cotations d'un univers défini, Finnhub pour les actualités, Anthropic Claude pour l'analyse structurée. Vérifier les tarifs, quotas, marchés couverts, délais et licences auprès des fournisseurs.
 
 Dans **GitHub → Settings → Secrets and variables → Actions**, ajouter :
 
@@ -26,7 +26,7 @@ Dans **GitHub → Settings → Secrets and variables → Actions**, ajouter :
 | CLOUDFLARE_API_TOKEN | Jeton Cloudflare autorisant le déploiement du Worker |
 | CLOUDFLARE_ACCOUNT_ID | Identifiant du compte Cloudflare |
 | FMP_API_KEY | Clé Financial Modeling Prep |
-| MARKETAUX_API_TOKEN | Jeton Marketaux |
+| FINNHUB_API_KEY | Jeton Finnhub |
 | ANTHROPIC_API_KEY | Clé Anthropic |
 
 Les clés fournisseurs sont facultatives individuellement ; seules les fonctions dont le fournisseur est configuré fonctionneront. Ne jamais placer de clé dans le code, config.js, une issue ou un message.
