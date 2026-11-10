@@ -14,7 +14,7 @@ export default {async fetch(request,env){
  if(request.method==="OPTIONS")return new Response(null,{headers:CORS_HEADERS});
  const url=new URL(request.url);
  try{
-  if(url.pathname==="/api/health"&&request.method==="GET")return json({ok:true,providers:{fmp:!!env.FMP_API_KEY,marketaux:!!env.MARKETAUX_API_TOKEN,anthropic:!!env.ANTHROPIC_API_KEY},timestamp:new Date().toISOString()});
+  if(url.pathname==="/api/health"&&request.method==="GET")return json({ok:true,providers:{fmp:!!env.FMP_API_KEY,finnhub:!!env.FINNHUB_API_KEY,anthropic:!!env.ANTHROPIC_API_KEY},timestamp:new Date().toISOString()});
   if(url.pathname==="/api/market"&&request.method==="GET"){
    if(!env.FMP_API_KEY)return json({error:"FMP_API_KEY non configurée côté Worker."},503);
    const market=safeMarket(url.searchParams.get("market")),symbols=UNIVERSES[market].join(",");
@@ -24,12 +24,12 @@ export default {async fetch(request,env){
    return json({market,quotes,source:"Financial Modeling Prep",asOf:new Date().toISOString(),universeSize:UNIVERSES[market].length});
   }
   if(url.pathname==="/api/news"&&request.method==="GET"){
-   if(!env.MARKETAUX_API_TOKEN)return json({error:"MARKETAUX_API_TOKEN non configurée côté Worker."},503);
+   if(!env.FINNHUB_API_KEY)return json({error:"FINNHUB_API_KEY non configurée côté Worker."},503);
    const market=safeMarket(url.searchParams.get("market"));
-   const params=new URLSearchParams({api_token:env.MARKETAUX_API_TOKEN,countries:MARKET_COUNTRY[market],language:MARKET_LANGUAGE[market],filter_entities:"true",limit:"20"});
-   const raw=await fetchJson(`https://api.marketaux.com/v1/news/all?${params.toString()}`);
-   const articles=(raw.data||[]).map(a=>({uuid:a.uuid,title:a.title,description:a.description||a.snippet,url:a.url,source:a.source,published_at:a.published_at,entities:(a.entities||[]).map(e=>({symbol:e.symbol,name:e.name,exchange:e.exchange,country:e.country,industry:e.industry,match_score:e.match_score,sentiment_score:e.sentiment_score}))}));
-   return json({market,articles,found:raw.meta?.found??articles.length,source:"Marketaux",asOf:new Date().toISOString()});
+   const params=new URLSearchParams({category:"general",token:env.FINNHUB_API_KEY});
+   const raw=await fetchJson(`https://finnhub.io/api/v1/news?${params.toString()}`);
+   const articles=(Array.isArray(raw)?raw:[]).slice(0,30).map(a=>({uuid:String(a.id),title:a.headline,description:a.summary||"",url:a.url,source:a.source,published_at:a.datetime?new Date(a.datetime*1000).toISOString():null,entities:[]}));
+   return json({market,articles,found:articles.length,source:"Finnhub",asOf:new Date().toISOString()});
   }
   if(url.pathname==="/api/analyze"&&request.method==="POST"){
    if(!env.ANTHROPIC_API_KEY)return json({error:"ANTHROPIC_API_KEY non configurée côté Worker."},503);
