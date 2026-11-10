@@ -21,6 +21,13 @@ jobs:
         uses: actions/checkout@v4
       - name: Configure Pages
         uses: actions/configure-pages@v5
+      - name: Configure API URL
+        env:
+          MARKET_API_BASE_URL: ${{ secrets.MARKET_API_BASE_URL }}
+        run: |
+          if [ -n "$MARKET_API_BASE_URL" ]; then
+            sed -i "s|API_BASE_URL: \"\"|API_BASE_URL: \"$MARKET_API_BASE_URL\"|" config.js
+          fi
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
