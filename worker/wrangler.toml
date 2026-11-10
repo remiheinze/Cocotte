@@ -1,0 +1,6 @@
+name = "cocotte-market-intelligence-api"
+main = "src/index.js"
+compatibility_date = "2026-10-15"
+[observability]
+enabled = true
+# Configure secrets via wrangler secret put. Never commit API keys.
