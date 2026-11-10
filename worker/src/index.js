@@ -28,7 +28,15 @@ export default {async fetch(request,env){
  if(request.method==="OPTIONS")return new Response(null,{headers:CORS_HEADERS});
  const url=new URL(request.url);
  try{
-  if(url.pathname==="/api/health"&&request.method==="GET")return json({ok:true,providers:{marketdata:"Yahoo Finance (sans clé)",finnhub:!!env.FINNHUB_API_KEY,anthropic:!!env.ANTHROPIC_API_KEY},timestamp:new Date().toISOString()});
+  if(url.pathname==="/api/health"&&request.method==="GET"){
+   const [marketCheck,newsCheck]=await Promise.allSettled([
+    fetchJson("https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=1d&interval=1d",{"user-agent":"Mozilla/5.0 CocotteMarket/1.0"}),
+    fetchRssFeed({id:"health-lesechos",name:"Les Échos",url:"https://services.lesechos.fr/rss/les-echos-economie.xml"})
+   ]);
+   const marketOk=marketCheck.status==="fulfilled"&&!!marketCheck.value.chart?.result?.[0]?.meta?.regularMarketPrice;
+   const newsOk=newsCheck.status==="fulfilled"&&newsCheck.value.length>0;
+   return json({ok:true,providers:{marketdata:marketOk,news:newsOk,newsFeeds:newsOk?1:0,finnhub:!!env.FINNHUB_API_KEY,anthropic:!!env.ANTHROPIC_API_KEY},checks:{marketdata:marketOk?"ok":marketCheck.status==="rejected"?marketCheck.reason.message:"no quote",news:newsOk?"ok":newsCheck.status==="rejected"?newsCheck.reason.message:"empty feed"},timestamp:new Date().toISOString()});
+  }
   if(url.pathname==="/api/market"&&request.method==="GET"){
    const market=safeMarket(url.searchParams.get("market"));
    const indexSymbols={usa:[["S&P 500","^GSPC"],["NASDAQ COMPOSITE","^IXIC"],["DOW JONES","^DJI"],["RUSSELL 2000","^RUT"]],france:[["CAC 40","^FCHI"],["SBF 120","^SBF120"],["CAC MID 60","^CACMD"],["EURO STOXX 50","^STOXX50E"]],global:[["S&P 500","^GSPC"],["EURO STOXX 50","^STOXX50E"],["NIKKEI 225","^N225"],["FTSE 100","^FTSE"]]}[market];
