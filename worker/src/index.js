@@ -19,9 +19,20 @@ export default {async fetch(request,env){
    if(!env.FMP_API_KEY)return json({error:"FMP_API_KEY non configurée côté Worker."},503);
    const market=safeMarket(url.searchParams.get("market")),symbols=UNIVERSES[market].join(",");
    const endpoint=`https://financialmodelingprep.com/stable/batch-quote?symbols=${encodeURIComponent(symbols)}&apikey=${encodeURIComponent(env.FMP_API_KEY)}`;
-   const raw=await fetchJson(endpoint);
-   const quotes=(Array.isArray(raw)?raw:[]).map(q=>({symbol:q.symbol,name:q.name||q.symbol,price:q.price,change:q.change,changePercentage:q.changePercentage,volume:q.volume,exchange:q.exchange,timestamp:q.timestamp})).filter(q=>Number.isFinite(Number(q.price))&&Number.isFinite(Number(q.changePercentage))).sort((a,b)=>b.changePercentage-a.changePercentage);
-   return json({market,quotes,source:"Financial Modeling Prep",asOf:new Date().toISOString(),universeSize:UNIVERSES[market].length});
+   const [stockResult,indexResult]=await Promise.allSettled([
+    fetchJson(endpoint),
+    fetchJson("https://financialmodelingprep.com/stable/batch-index-quotes?apikey="+encodeURIComponent(env.FMP_API_KEY))
+   ]);
+   if(stockResult.status==="rejected")throw stockResult.reason;
+   const quotes=(Array.isArray(stockResult.value)?stockResult.value:[]).map(q=>({symbol:q.symbol,name:q.name||q.symbol,price:q.price,change:q.change,changePercentage:q.changePercentage,volume:q.volume,exchange:q.exchange,timestamp:q.timestamp})).filter(q=>Number.isFinite(Number(q.price))&&Number.isFinite(Number(q.changePercentage))).sort((a,b)=>b.changePercentage-a.changePercentage);
+   const indexSets={
+    usa:[["S&P 500",/S&P 500/i],["NASDAQ COMPOSITE",/NASDAQ Composite/i],["DOW JONES",/Dow Jones Industrial Average/i],["RUSSELL 2000",/Russell 2000/i]],
+    france:[["CAC 40",/CAC 40/i],["SBF 120",/SBF 120/i],["CAC MID 60",/CAC Mid 60/i],["EURO STOXX 50",/EURO STOXX 50/i]],
+    global:[["MSCI WORLD",/MSCI World/i],["S&P 500",/S&P 500/i],["EURO STOXX 50",/EURO STOXX 50/i],["NIKKEI 225",/Nikkei 225/i]]
+   };
+   const allIndexes=indexResult.status==="fulfilled"&&Array.isArray(indexResult.value)?indexResult.value:[];
+   const indices=indexSets[market].map(([label,pattern])=>{const q=allIndexes.find(item=>pattern.test(String(item.name||""))||pattern.test(String(item.symbol||"")));return q&&Number.isFinite(Number(q.price))?{label,symbol:q.symbol,name:q.name,price:q.price,changePercentage:q.changePercentage??(Number(q.change)&&Number(q.price)?100*Number(q.change)/(Number(q.price)-Number(q.change)):0),timestamp:q.timestamp}:null}).filter(Boolean);
+   return json({market,quotes,indices,source:"Financial Modeling Prep",asOf:new Date().toISOString(),universeSize:UNIVERSES[market].length,indexSource:indexResult.status==="fulfilled"?"Financial Modeling Prep":"unavailable"});
   }
   if(url.pathname==="/api/news"&&request.method==="GET"){
    if(!env.FINNHUB_API_KEY)return json({error:"FINNHUB_API_KEY non configurée côté Worker."},503);
