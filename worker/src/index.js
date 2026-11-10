@@ -14,25 +14,25 @@ export default {async fetch(request,env){
  if(request.method==="OPTIONS")return new Response(null,{headers:CORS_HEADERS});
  const url=new URL(request.url);
  try{
-  if(url.pathname==="/api/health"&&request.method==="GET")return json({ok:true,providers:{fmp:!!env.FMP_API_KEY,finnhub:!!env.FINNHUB_API_KEY,anthropic:!!env.ANTHROPIC_API_KEY},timestamp:new Date().toISOString()});
+  if(url.pathname==="/api/health"&&request.method==="GET")return json({ok:true,providers:{marketdata:"Yahoo Finance (sans clé)",finnhub:!!env.FINNHUB_API_KEY,anthropic:!!env.ANTHROPIC_API_KEY},timestamp:new Date().toISOString()});
   if(url.pathname==="/api/market"&&request.method==="GET"){
-   if(!env.FMP_API_KEY)return json({error:"FMP_API_KEY non configurée côté Worker."},503);
-   const market=safeMarket(url.searchParams.get("market")),symbols=UNIVERSES[market].join(",");
-   const endpoint=`https://financialmodelingprep.com/stable/batch-quote?symbols=${encodeURIComponent(symbols)}&apikey=${encodeURIComponent(env.FMP_API_KEY)}`;
-   const [stockResult,indexResult]=await Promise.allSettled([
-    fetchJson(endpoint),
-    fetchJson("https://financialmodelingprep.com/stable/batch-index-quotes?apikey="+encodeURIComponent(env.FMP_API_KEY))
-   ]);
-   if(stockResult.status==="rejected")throw stockResult.reason;
-   const quotes=(Array.isArray(stockResult.value)?stockResult.value:[]).map(q=>({symbol:q.symbol,name:q.name||q.symbol,price:q.price,change:q.change,changePercentage:q.changePercentage,volume:q.volume,exchange:q.exchange,timestamp:q.timestamp})).filter(q=>Number.isFinite(Number(q.price))&&Number.isFinite(Number(q.changePercentage))).sort((a,b)=>b.changePercentage-a.changePercentage);
-   const indexSets={
-    usa:[["S&P 500",/S&P 500/i],["NASDAQ COMPOSITE",/NASDAQ Composite/i],["DOW JONES",/Dow Jones Industrial Average/i],["RUSSELL 2000",/Russell 2000/i]],
-    france:[["CAC 40",/CAC 40/i],["SBF 120",/SBF 120/i],["CAC MID 60",/CAC Mid 60/i],["EURO STOXX 50",/EURO STOXX 50/i]],
-    global:[["MSCI WORLD",/MSCI World/i],["S&P 500",/S&P 500/i],["EURO STOXX 50",/EURO STOXX 50/i],["NIKKEI 225",/Nikkei 225/i]]
-   };
-   const allIndexes=indexResult.status==="fulfilled"&&Array.isArray(indexResult.value)?indexResult.value:[];
-   const indices=indexSets[market].map(([label,pattern])=>{const q=allIndexes.find(item=>pattern.test(String(item.name||""))||pattern.test(String(item.symbol||"")));return q&&Number.isFinite(Number(q.price))?{label,symbol:q.symbol,name:q.name,price:q.price,changePercentage:q.changePercentage??(Number(q.change)&&Number(q.price)?100*Number(q.change)/(Number(q.price)-Number(q.change)):0),timestamp:q.timestamp}:null}).filter(Boolean);
-   return json({market,quotes,indices,source:"Financial Modeling Prep",asOf:new Date().toISOString(),universeSize:UNIVERSES[market].length,indexSource:indexResult.status==="fulfilled"?"Financial Modeling Prep":"unavailable"});
+   const market=safeMarket(url.searchParams.get("market"));
+   const indexSymbols={usa:[["S&P 500","^GSPC"],["NASDAQ COMPOSITE","^IXIC"],["DOW JONES","^DJI"],["RUSSELL 2000","^RUT"]],france:[["CAC 40","^FCHI"],["SBF 120","^SBF120"],["CAC MID 60","^CACMD"],["EURO STOXX 50","^STOXX50E"]],global:[["S&P 500","^GSPC"],["EURO STOXX 50","^STOXX50E"],["NIKKEI 225","^N225"],["FTSE 100","^FTSE"]]}[market];
+   const symbols=[...UNIVERSES[market],...indexSymbols.map(x=>x[1])];
+   const results=await Promise.allSettled(symbols.map(async symbol=>{
+    const payload=await fetchJson("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(symbol)+"?range=1d&interval=1d",{ "user-agent":"Mozilla/5.0 CocotteMarket/1.0","accept":"application/json"});
+    const result=payload.chart?.result?.[0];
+    if(!result)throw new Error(payload.chart?.error?.description||"Aucune cotation pour "+symbol);
+    const meta=result.meta||{},price=Number(meta.regularMarketPrice),previous=Number(meta.chartPreviousClose??meta.previousClose);
+    if(!Number.isFinite(price)||!Number.isFinite(previous)||previous===0)throw new Error("Cours incomplet pour "+symbol);
+    return {symbol,name:meta.longName||meta.shortName||symbol,price,change:price-previous,changePercentage:(price-previous)/previous*100,volume:meta.regularMarketVolume??null,exchange:meta.fullExchangeName||meta.exchangeName||"Yahoo Finance",timestamp:meta.regularMarketTime??null,currency:meta.currency??null};
+   }));
+   const bySymbol=new Map();
+   results.forEach((r,i)=>{if(r.status==="fulfilled")bySymbol.set(symbols[i],r.value)});
+   const quotes=UNIVERSES[market].map(s=>bySymbol.get(s)).filter(Boolean).sort((x,y)=>y.changePercentage-x.changePercentage);
+   const indices=indexSymbols.map(([label,symbol])=>{const q=bySymbol.get(symbol);return q?{...q,label}:null}).filter(Boolean);
+   if(!quotes.length&&!indices.length)throw new Error("Yahoo Finance ne renvoie aucune cotation pour cet univers. Réessaie dans quelques instants.");
+   return json({market,quotes,indices,source:"Yahoo Finance",notice:"Source non officielle ; délai et disponibilité variables.",asOf:new Date().toISOString(),universeSize:UNIVERSES[market].length});
   }
   if(url.pathname==="/api/news"&&request.method==="GET"){
    if(!env.FINNHUB_API_KEY)return json({error:"FINNHUB_API_KEY non configurée côté Worker."},503);
