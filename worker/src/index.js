@@ -9,6 +9,20 @@ const MARKET_COUNTRY={usa:"us",france:"fr",global:"us,fr,gb,de,jp"};
 const MARKET_LANGUAGE={usa:"en",france:"fr,en",global:"en,fr"};
 function json(data,status=200){return new Response(JSON.stringify(data),{status,headers:{...JSON_HEADERS,...CORS_HEADERS}})}
 function safeMarket(v){return ["usa","france","global"].includes(v)?v:"usa"}
+function xmlText(s=""){return String(s).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,"$1").replace(/<[^>]+>/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n))).replace(/&#x([0-9a-f]+);/gi,(_,n)=>String.fromCodePoint(parseInt(n,16))).replace(/\s+/g," ").trim()}
+function xmlField(block,name){const m=block.match(new RegExp("<"+name+"(?:\\s+[^>]*)?>([\\s\\S]*?)</"+name+">","i"));return m?xmlText(m[1]):""}
+async function fetchRssFeed(feed){
+ const response=await fetch(feed.url,{headers:{"user-agent":"Mozilla/5.0 CocotteMarket/1.0","accept":"application/rss+xml, application/xml, text/xml, */*"},signal:AbortSignal.timeout(10000)});
+ if(!response.ok)throw new Error(feed.name+" HTTP "+response.status);
+ const xml=await response.text(),items=[...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].map(m=>m[1]);
+ return items.map((item,i)=>{
+  const title=xmlField(item,"title"),link=xmlField(item,"link")||((item.match(/<link[^>]*href=["']([^"']+)["']/i)||[])[1]||"");
+  const description=xmlField(item,"description")||xmlField(item,"content:encoded")||xmlField(item,"summary");
+  const rawDate=xmlField(item,"pubDate")||xmlField(item,"dc:date")||xmlField(item,"published")||xmlField(item,"updated");
+  const date=rawDate?new Date(rawDate):null;
+  return {uuid:feed.id+"-"+i,title,description:description.slice(0,700),url:link,source:feed.name,published_at:date&&!Number.isNaN(date.getTime())?date.toISOString():null,entities:[],language:"fr"};
+ }).filter(a=>a.title&&a.url);
+}
 async function fetchJson(url,headers={}){const r=await fetch(url,{headers,signal:AbortSignal.timeout(12000)});if(!r.ok){const body=await r.text();throw new Error(`Fournisseur HTTP ${r.status}: ${body.slice(0,180)}`)}return r.json()}
 export default {async fetch(request,env){
  if(request.method==="OPTIONS")return new Response(null,{headers:CORS_HEADERS});
@@ -57,12 +71,29 @@ export default {async fetch(request,env){
    return json({market,period,lookbackDays:366,rows,unavailable:settled.filter(x=>x.status==="rejected").length,source:"Yahoo Finance",asOf:new Date().toISOString()});
   }
   if(url.pathname==="/api/news"&&request.method==="GET"){
-   if(!env.FINNHUB_API_KEY)return json({error:"FINNHUB_API_KEY non configurée côté Worker."},503);
    const market=safeMarket(url.searchParams.get("market"));
-   const params=new URLSearchParams({category:"general",token:env.FINNHUB_API_KEY});
-   const raw=await fetchJson(`https://finnhub.io/api/v1/news?${params.toString()}`);
-   const articles=(Array.isArray(raw)?raw:[]).slice(0,30).map(a=>({uuid:String(a.id),title:a.headline,description:a.summary||"",url:a.url,source:a.source,published_at:a.datetime?new Date(a.datetime*1000).toISOString():null,entities:[]}));
-   return json({market,articles,found:articles.length,source:"Finnhub",asOf:new Date().toISOString()});
+   const feeds=[
+    {id:"lesechos",name:"Les Échos",url:"https://services.lesechos.fr/rss/les-echos-economie.xml"},
+    {id:"bfmbusiness",name:"BFM Business",url:"https://www.bfmtv.com/rss/economie/"},
+    {id:"lemonde",name:"Le Monde – Économie",url:"https://www.lemonde.fr/economie-francaise/rss_full.xml"},
+    {id:"bercy",name:"Ministère de l’Économie",url:"https://www.economie.gouv.fr/rss/toutesactualites"}
+   ];
+   const frenchResults=await Promise.allSettled(feeds.map(fetchRssFeed));
+   let articles=frenchResults.filter(x=>x.status==="fulfilled").flatMap(x=>x.value);
+   let internationalCount=0;
+   if(env.FINNHUB_API_KEY&&market!=="france"){
+    try{
+     const params=new URLSearchParams({category:"general",token:env.FINNHUB_API_KEY});
+     const raw=await fetchJson("https://finnhub.io/api/v1/news?"+params.toString());
+     const international=(Array.isArray(raw)?raw:[]).slice(0,15).map(a=>({uuid:"fh-"+String(a.id),title:a.headline,description:a.summary||"",url:a.url,source:a.source,published_at:a.datetime?new Date(a.datetime*1000).toISOString():null,entities:[],language:"en"}));
+     articles=articles.concat(international);internationalCount=international.length;
+    }catch(e){/* Les sources françaises restent disponibles si Finnhub est indisponible. */}
+   }
+   const unique=new Map();
+   for(const a of articles){const key=a.url||a.title;if(!unique.has(key))unique.set(key,a)}
+   articles=[...unique.values()].sort((a,b)=>(Date.parse(b.published_at||"")||0)-(Date.parse(a.published_at||"")||0)).slice(0,50);
+   const availableFeeds=feeds.filter((f,i)=>frenchResults[i].status==="fulfilled").map(f=>f.name);
+   return json({market,articles,found:articles.length,sources:availableFeeds,source:"Flux RSS français"+(internationalCount?" + Finnhub":"")+"",asOf:new Date().toISOString(),unavailableFeeds:feeds.length-availableFeeds.length});
   }
   if(url.pathname==="/api/analyze"&&request.method==="POST"){
    if(!env.ANTHROPIC_API_KEY)return json({error:"ANTHROPIC_API_KEY non configurée côté Worker."},503);
